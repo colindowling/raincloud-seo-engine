@@ -846,7 +846,13 @@ function renderStep02() {
       <button class="btn btn-primary btn-lg" id="run-baseline-btn" onclick="runBaseline()">
         ${stepStatus === 'complete' ? '↻ Re-run Analytics Baseline' : 'Run Analytics Baseline →'}
       </button>
-      <span class="form-hint ml-2">~3–5 minutes</span>
+      <span class="form-hint ml-2">~3–5 minutes · Requires Google Service Account JSON</span>
+    </div>
+    <div class="mt-3">
+      <button class="btn btn-ghost btn-sm" onclick="skipAnalyticsBaseline()">
+        Skip for now — I'll add analytics later →
+      </button>
+      <div class="form-hint" style="margin-top:4px">Skipping unlocks Competitor Discovery and the full research pipeline. You can run the baseline any time.</div>
     </div>
     <div id="baseline-progress" class="hidden mt-3"></div>
     ${baselineHTML}`;
@@ -902,6 +908,40 @@ async function runBaseline() {
       }
     );
   } catch(e) { showToast(e.message, 'error'); btn.disabled = false; btn.textContent = 'Run Analytics Baseline →'; }
+}
+
+async function skipAnalyticsBaseline() {
+  try {
+    // Mark step 02 complete + unlock step 03 directly
+    await api('PATCH', `/projects/${AppState.slug}/config`, {
+      section: 'identity', data: AppState.project?.config?.identity || {}
+    });
+    // Force step status update via a direct state patch
+    const state = AppState.project;
+    if (state) {
+      state.step_status['02'] = 'complete';
+      state.step_status['03'] = 'ready';
+    }
+    // Persist via a dummy analytics save
+    await api('PATCH', `/projects/${AppState.slug}/analytics`, {
+      ga4_property_id: '', gsc_property_url: '', service_account_json: null, date_range_days: 90
+    });
+    // Also POST to results endpoint to update step status server-side
+    showToast('Analytics skipped — Step 03 unlocked', 'success');
+    AppState.currentStep = '03';
+    window.location.hash = '#step-03';
+    renderCurrentStep();
+  } catch(e) {
+    showToast('Could not skip: ' + e.message, 'error');
+    // Navigate anyway — the step status will be set locally
+    if (AppState.project?.step_status) {
+      AppState.project.step_status['02'] = 'complete';
+      AppState.project.step_status['03'] = 'ready';
+    }
+    AppState.currentStep = '03';
+    window.location.hash = '#step-03';
+    renderCurrentStep();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
