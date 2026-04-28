@@ -337,4 +337,106 @@ router.delete('/:slug', requireAuth, (req, res) => {
   }
 });
 
+// ─── POST /api/projects/:slug/read-site  [requireAuth] ──────────────────────
+// Crawls the project domain with Exa and extracts business identity via Claude.
+// Auto-populates offer description, industry, personas, products.
+
+router.post('/:slug/read-site', requireAuth, async (req, res) => {
+  try {
+    if (req.projectSlug !== req.params.slug) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const state = getState(req.params.slug);
+    if (!state) return res.status(404).json({ error: 'Project not found' });
+
+    const domain = req.body.domain || state.config?.identity?.primary_domain || '';
+    if (!domain) return res.status(400).json({ error: 'No domain configured. Enter your domain first.' });
+
+    const EXA_KEY       = process.env.EXA_API_KEY       || '';
+    const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
+
+    if (!EXA_KEY)       return res.status(500).json({ error: 'EXA_API_KEY not configured on server.' });
+    if (!ANTHROPIC_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured on server.' });
+
+    const fetch = require('node-fetch');
+
+    // Step 1: Exa crawl — read the site content
+    const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    const exaResp = await fetch('https://api.exa.ai/search', {
+      method: 'POST',
+      headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `What does ${cleanDomain} do, who do they serve, and what are their products`,
+        numResults: 8,
+        type: 'neural',
+        includeDomains: [cleanDomain],
+        useAutoprompt: false,
+        contents: { text: true, highlights: true }
+      })
+    });
+
+    const exaData = await exaResp.json();
+    const siteText = (exaData.results || [])
+      .map(r => [r.title, r.text || '', (r.highlights || []).join(' ')].join('\n'))
+      .join('\n\n')
+      .slice(0, 8000);
+
+    if (!siteText.trim()) {
+      return res.status(422).json({ error: `Could not read content from ${cleanDomain}. Make sure the site is live and publicly accessible.` });
+    }
+
+    // Step 2: Claude extracts structured identity from site content
+    const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-20250514',
+        max_tokens: 1000,
+        system: 'You are a business analyst. Extract structured information from website content. Return ONLY valid JSON, no explanation.',
+        messages: [{
+          role: 'user',
+          content: `Analyze this website content and extract business identity information.
+
+Website domain: ${cleanDomain}
+Content:
+${siteText}
+
+Return ONLY this JSON structure (no markdown, no explanation):
+{
+  "client_name": "Company name (proper case)",
+  "offer_description": "2-3 sentences: what they sell, who they sell it to, and the core outcome they deliver. Be specific.",
+  "industry": "Industry/vertical in 2-4 words (e.g. 'B2B SaaS Marketing', 'Healthcare Compliance Software')",
+  "primary_products": ["product or service 1", "product or service 2", "product or service 3"],
+  "target_personas": ["Job title/role 1", "Job title/role 2", "Job title/role 3"],
+  "icp_company_size": ["SMB", "Mid-Market", "Enterprise"],
+  "icp_industries": ["industry 1", "industry 2", "industry 3"]
+}`
+        }]
+      })
+    });
+
+    const claudeData = await claudeResp.json();
+    const rawText = claudeData.content?.[0]?.text || '{}';
+
+    let extracted;
+    try {
+      // Strip markdown fences if present
+      const clean = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/,'').trim();
+      extracted = JSON.parse(clean);
+    } catch {
+      return res.status(500).json({ error: 'Could not parse site intelligence. Try again or fill in manually.' });
+    }
+
+    return res.json({ extracted, domain_read: cleanDomain, chars_read: siteText.length });
+
+  } catch (err) {
+    console.error('[projects] read-site error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
