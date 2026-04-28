@@ -213,15 +213,26 @@ function renderStepNav() {
 }
 
 function navigateStep(id) {
-  // Step 00 is always accessible — it's the project setup confirmation
-  if (id === '00') { window.location.hash = '#step-00'; return; }
+  // Step 00 is always accessible
+  if (id === '00') {
+    AppState.currentStep = '00';
+    window.location.hash = '#step-00';
+    renderCurrentStep();
+    return;
+  }
   const status = AppState.project?.step_status || {};
   const st = status[id] || 'locked';
   if (st === 'locked') {
     showToast('Complete earlier steps to unlock this one.', 'warning');
     return;
   }
-  window.location.hash = `#step-${id}`;
+  AppState.currentStep = id;
+  // If hash is already this step, hashchange won't fire — force render directly
+  if (window.location.hash === `#step-${id}`) {
+    renderCurrentStep();
+  } else {
+    window.location.hash = `#step-${id}`;
+  }
 }
 
 // ─── Layout Wrapper ───────────────────────────────────────────────────────────
