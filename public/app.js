@@ -213,8 +213,10 @@ function renderStepNav() {
 }
 
 function navigateStep(id) {
+  // Step 00 is always accessible — it's the project setup confirmation
+  if (id === '00') { window.location.hash = '#step-00'; return; }
   const status = AppState.project?.step_status || {};
-  const st = id === '00' ? 'complete' : (status[id] || 'locked');
+  const st = status[id] || 'locked';
   if (st === 'locked') {
     showToast('Complete earlier steps to unlock this one.', 'warning');
     return;
