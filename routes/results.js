@@ -229,17 +229,32 @@ function routeResult(state, workflowId, result) {
 
     // ── Run Full Pipeline (batched) ─────────────────────────────────────────
     case 'Run_Full_Pipeline': {
-      // stage_updates contains per-stage results keyed by workflow name
+      // stage_updates keys may be snake_case (from orchestrator) or PascalCase — handle both
       const stages = result?.stage_updates || {};
 
-      const stageWorkflows = [
-        'Site_Intelligence', 'Permutation_Engine', 'G2_Review_Mining',
-        'Reddit_Intelligence', 'SERP_Analysis', 'Synthesis_Scoring'
-      ];
+      // Map snake_case orchestrator keys → PascalCase workflow IDs used by routeResult
+      const stageMap = {
+        'site_intelligence':   'Site_Intelligence',
+        'permutation_engine':  'Permutation_Engine',
+        'g2_review_mining':    'G2_Review_Mining',
+        'reddit_intelligence': 'Reddit_Intelligence',
+        'serp_analysis':       'SERP_Analysis',
+        'synthesis_scoring':   'Synthesis_Scoring',
+        // Also handle PascalCase keys directly (forward compat)
+        'Site_Intelligence':   'Site_Intelligence',
+        'Permutation_Engine':  'Permutation_Engine',
+        'G2_Review_Mining':    'G2_Review_Mining',
+        'Reddit_Intelligence': 'Reddit_Intelligence',
+        'SERP_Analysis':       'SERP_Analysis',
+        'Synthesis_Scoring':   'Synthesis_Scoring',
+      };
 
-      for (const wf of stageWorkflows) {
-        if (stages[wf]) {
-          routeResult(state, wf, stages[wf]);
+      for (const [key, stageResult] of Object.entries(stages)) {
+        const wfId = stageMap[key];
+        if (wfId && stageResult) {
+          try { routeResult(state, wfId, stageResult); } catch(e) {
+            console.error(`[results] Run_Full_Pipeline stage ${key} error:`, e.message);
+          }
         }
       }
 
