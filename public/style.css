@@ -94,6 +94,20 @@ code, pre {
   overflow: hidden;
 }
 
+.main-content {
+  flex: 1;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.main-inner {
+  padding: 32px 40px 80px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
 /* ---------------------------------------------------------
    4. Sidebar
    --------------------------------------------------------- */
