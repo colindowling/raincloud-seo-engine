@@ -360,29 +360,58 @@ router.post('/:slug/read-site', requireAuth, async (req, res) => {
 
     const fetch = require('node-fetch');
 
-    // Step 1: Exa crawl — read the site content
+    // Step 1: Exa live-crawl — fetch direct site content
     const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    const exaResp = await fetch('https://api.exa.ai/search', {
-      method: 'POST',
-      headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: `What does ${cleanDomain} do, who do they serve, and what are their products`,
-        numResults: 8,
-        type: 'neural',
-        includeDomains: [cleanDomain],
-        useAutoprompt: false,
-        contents: { text: true, highlights: true }
-      })
-    });
+    const siteUrl = `https://${cleanDomain}`;
 
-    const exaData = await exaResp.json();
-    const siteText = (exaData.results || [])
-      .map(r => [r.title, r.text || '', (r.highlights || []).join(' ')].join('\n'))
-      .join('\n\n')
-      .slice(0, 8000);
+    let siteText = '';
 
+    // Try 1: Exa contents API with live crawl (fetches the URL directly)
+    try {
+      const exaContentsResp = await fetch('https://api.exa.ai/contents', {
+        method: 'POST',
+        headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          urls: [siteUrl, `${siteUrl}/about`, `${siteUrl}/services`],
+          text: true,
+          livecrawl: 'always'
+        })
+      });
+      const contentsData = await exaContentsResp.json();
+      siteText = (contentsData.results || [])
+        .map(r => [r.url, r.title || '', r.text || ''].join('\n'))
+        .join('\n\n')
+        .slice(0, 8000);
+    } catch(e) {
+      console.log('[read-site] contents API failed:', e.message);
+    }
+
+    // Try 2: Exa search without domain restriction if crawl returned nothing
     if (!siteText.trim()) {
-      return res.status(422).json({ error: `Could not read content from ${cleanDomain}. Make sure the site is live and publicly accessible.` });
+      try {
+        const exaSearchResp = await fetch('https://api.exa.ai/search', {
+          method: 'POST',
+          headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: `site:${cleanDomain} what does this company do`,
+            numResults: 5,
+            type: 'keyword',
+            contents: { text: true }
+          })
+        });
+        const searchData = await exaSearchResp.json();
+        siteText = (searchData.results || [])
+          .map(r => [r.title, r.text || ''].join('\n'))
+          .join('\n\n')
+          .slice(0, 8000);
+      } catch(e) {
+        console.log('[read-site] search fallback failed:', e.message);
+      }
+    }
+
+    // Try 3: Use Claude's knowledge of the domain as last resort
+    if (!siteText.trim()) {
+      siteText = `Domain: ${cleanDomain}\nNote: Could not fetch live site content. Use general knowledge about this company if available, or return best-guess fields.`;
     }
 
     // Step 2: Claude extracts structured identity from site content
