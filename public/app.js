@@ -1798,11 +1798,11 @@ async function renderCurrentStep() {
   if (!app) return;
 
   if (!AppState.authenticated) {
-    await renderStep00();
+    try { await renderStep00(); } catch(e) { app.innerHTML = `<div style="padding:40px;color:#ef4444;font-family:monospace"><b>Landing page error:</b><br>${e.message}<br><pre style="font-size:11px">${e.stack||''}</pre></div>`; }
     return;
   }
 
-  const step = AppState.currentStep;
+  const step = AppState.currentStep || '01';
   const renderers = {
     '00': async () => renderLayout(`${stepHeader('00', 'Project Setup', 'Project created and active.')}<div class="card"><p>Project: <strong>${esc(AppState.projectName)}</strong></p><button class="btn btn-primary mt-3" onclick="navigateStep('01')">Configure Brand & Identity →</button></div>`),
     '01': async () => renderStep01(),
@@ -1818,10 +1818,19 @@ async function renderCurrentStep() {
 
   const renderer = renderers[step];
   if (renderer) {
-    const html = await renderer();
-    if (html) app.innerHTML = html;
-    // Start elapsed timers for running pipeline stages
-    if (step === '04') startPipelineTimers();
+    try {
+      const html = await renderer();
+      if (html) {
+        app.innerHTML = html;
+        if (step === '04') startPipelineTimers();
+      } else {
+        // Renderer returned nothing — show diagnostic
+        app.innerHTML = `<div style="padding:40px;color:#f59e0b;font-family:monospace"><b>Step ${step} rendered nothing.</b><br>AppState.project: ${AppState.project ? 'loaded' : 'NULL'}<br>step_status: ${JSON.stringify(AppState.project?.step_status||{})}</div>`;
+      }
+    } catch(err) {
+      console.error('[renderCurrentStep] step', step, err);
+      app.innerHTML = `<div style="padding:40px;color:#ef4444;font-family:monospace"><b>Error rendering step ${step}:</b><br>${err.message}<br><pre style="font-size:11px;white-space:pre-wrap">${err.stack||''}</pre><br><button onclick="navigateStep('01')" style="margin-top:12px;padding:8px 16px;background:#3b82f6;color:white;border:none;border-radius:6px;cursor:pointer">← Back to Step 01</button></div>`;
+    }
   }
 }
 
