@@ -1052,11 +1052,9 @@ function renderStep03() {
       </div>
     </div>
 
-    <div class="action-row mt-4">
-      <button class="btn btn-secondary" onclick="enrichCompetitors()" id="enrich-btn" ${!candidates.length ? 'disabled' : ''}>
-        Enrich Competitors (Clay + Exa)
-      </button>
-      <button class="btn btn-primary ml-2" onclick="confirmCompetitors()" id="confirm-comp-btn" ${!candidates.length ? 'disabled' : ''}>
+    <div class="action-row mt-4" style="flex-wrap:wrap;gap:10px">
+      ${candidates.length ? `<button class="btn btn-ghost btn-sm" onclick="excludeAllCompetitors()">✗ Exclude All Auto-Discovered</button>` : ''}
+      <button class="btn btn-primary" onclick="confirmCompetitors()" id="confirm-comp-btn">
         Confirm & Continue →
       </button>
     </div>
@@ -1096,6 +1094,16 @@ async function discoverCompetitors() {
       }
     );
   } catch(e) { showToast(e.message, 'error'); btn.disabled = false; btn.textContent = 'Discover Competitors →'; prog.classList.add('hidden'); }
+}
+
+function excludeAllCompetitors() {
+  document.querySelectorAll('.competitor-card').forEach(card => {
+    card.classList.remove('included');
+    card.classList.add('excluded');
+    const btn = card.querySelector('button');
+    if (btn) { btn.textContent = '✗ Exclude'; btn.className = 'btn btn-sm btn-ghost'; }
+  });
+  showToast('All auto-discovered competitors excluded. Add yours manually below.', 'info');
 }
 
 async function enrichCompetitors() {
