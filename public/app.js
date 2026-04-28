@@ -1729,7 +1729,18 @@ async function refreshProjectState() {
   try {
     const d = await api('GET', `/projects/${AppState.slug}/state`);
     if (d?.state) AppState.project = d.state;
-  } catch(e) { /* swallow */ }
+  } catch(e) {
+    // Project not found — stale cookie. Force logout and show landing page.
+    if (e.message && (e.message.includes('404') || e.message.includes('not found'))) {
+      await api('POST', '/auth/logout');
+      AppState.authenticated = false;
+      AppState.slug = null;
+      AppState.projectName = null;
+      AppState.project = null;
+      AppState.currentStep = '00';
+      window.location.hash = '';
+    }
+  }
 }
 
 async function renderCurrentStep() {
