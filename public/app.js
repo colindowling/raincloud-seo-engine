@@ -1809,8 +1809,9 @@ const STUDIO_STEPS = [
 ];
 
 // Patch renderStepNav to append the Content Studio sidebar section
+// NOTE: must use variable assignment (not function declaration) to avoid hoisting
 const _origRenderStepNav = renderStepNav;
-function renderStepNav() {
+renderStepNav = function() {
   const pipelineItems = _origRenderStepNav();
   const activeStudio = AppState.currentStudio || null;
 
@@ -1830,7 +1831,7 @@ function renderStepNav() {
     <div class="sidebar-section-divider"></div>
     <div class="sidebar-section-label">Content Studio</div>
     ${studioItems}`;
-}
+};
 
 function navigateStudio(id) {
   AppState.currentStudio = id;
