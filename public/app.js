@@ -520,6 +520,14 @@ function renderStep01() {
 
     <div id="tab-identity" class="tab-pane active">
       <div class="card">
+        <div class="win-box mb-3" style="display:flex;align-items:center;justify-content:space-between;gap:16px">
+          <div>
+            <strong>Let the machine read your site</strong>
+            <p style="font-size:13px;margin:4px 0 0;color:var(--text-secondary)">Enter your domain below, then click this button — we'll crawl your site and fill in everything automatically.</p>
+          </div>
+          <button class="btn btn-primary" style="white-space:nowrap;flex-shrink:0" id="read-site-btn" onclick="readSite()">Read My Site →</button>
+        </div>
+        <div id="read-site-status" style="display:none;font-size:13px;color:var(--text-secondary);margin-bottom:12px"></div>
         <div class="form-grid-2">
           <div class="form-group">
             <label class="form-label">Client Name</label>
@@ -739,6 +747,47 @@ async function saveIdentity() {
     const r = await api('PATCH', `/projects/${AppState.slug}/config`, { section:'identity', data });
     if (r) { AppState.project.config.identity = data; AppState.project.step_status = r.step_status || AppState.project.step_status; showToast('Identity saved', 'success'); renderSidebar(); }
   } catch(e) { showToast(e.message, 'error'); }
+}
+
+async function readSite() {
+  const domain = document.getElementById('id-domain')?.value.trim();
+  if (!domain) { showToast('Enter your domain first (e.g. rncld.com)', 'warning'); return; }
+
+  const btn    = document.getElementById('read-site-btn');
+  const status = document.getElementById('read-site-status');
+  btn.disabled = true; btn.textContent = 'Reading…';
+  if (status) { status.style.display = 'block'; status.textContent = `Reading ${domain}…`; }
+
+  try {
+    const d = await api('POST', `/projects/${AppState.slug}/read-site`, { domain });
+    if (!d?.extracted) throw new Error('No data extracted');
+
+    const ex = d.extracted;
+
+    // Populate form fields
+    if (ex.client_name)       { const el = document.getElementById('id-client-name'); if(el) el.value = ex.client_name; }
+    if (ex.industry)          { const el = document.getElementById('id-industry');     if(el) el.value = ex.industry; }
+    if (ex.offer_description) { const el = document.getElementById('id-offer');        if(el) el.value = ex.offer_description; }
+    if (ex.primary_products?.length)  { const el = document.getElementById('id-products');       if(el) el.value = ex.primary_products.join(', '); }
+    if (ex.target_personas?.length)   { const el = document.getElementById('id-personas');       if(el) el.value = ex.target_personas.join(', '); }
+    if (ex.icp_industries?.length)    { const el = document.getElementById('id-icp-industries'); if(el) el.value = ex.icp_industries.join(', '); }
+
+    // Set checkboxes for company size
+    if (ex.icp_company_size?.length) {
+      document.querySelectorAll('#tab-identity input[type=checkbox]').forEach(cb => {
+        cb.checked = ex.icp_company_size.includes(cb.value);
+      });
+    }
+
+    if (status) status.textContent = `✓ Read ${d.chars_read?.toLocaleString() || ''} characters from ${d.domain_read}. Review the fields below and adjust anything that's off, then click Save Identity.`;
+    showToast('Site read — fields pre-filled. Review and save.', 'success');
+
+  } catch(e) {
+    if (status) { status.style.display = 'none'; }
+    showToast('Could not read site: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Read My Site →';
+  }
 }
 
 async function saveBrand() {
