@@ -354,12 +354,45 @@ async function handleCreateProject(e) {
   try {
     const d = await api('POST', '/projects/create', { project_name: name, primary_domain: domain, password });
     if (!d) return;
-    AppState.slug = d.slug;
+    AppState.slug        = d.slug;
     AppState.projectName = d.project_name;
     AppState.authenticated = true;
-    await refreshProjectState();
+
+    // Set minimal project state immediately so steps are unlocked right away.
+    // Don't wait for refreshProjectState — it runs in the background.
+    AppState.project = {
+      slug: d.slug,
+      project_name: d.project_name,
+      step_status: {
+        '00':'complete','01':'ready','02':'locked','03':'locked',
+        '04':'locked','05':'locked','06':'locked','07':'locked',
+        '08':'locked','09':'locked'
+      },
+      config: {
+        identity: { client_name: name, primary_domain: domain, industry:'', offer_description:'', primary_products:[], target_personas:[], icp_company_size:[], icp_industries:[] },
+        brand: { primary_font:'Inter', secondary_font:'Inter', primary_color:'#3b82f6', secondary_color:'#1e40af', accent_color:'#10b981', background_color:'#ffffff', text_color:'#1f2937', logo_url:'', brand_voice:'Professional', cta_button_text:'Book a Demo', cta_button_url:'' },
+        lead_magnets: [], contact_form: { form_headline:'', fields:['name','company','email'], submission_endpoint:'', confirmation_message:'', notification_email:'' }
+      },
+      analytics: { ga4_property_id:'', gsc_property_url:'', service_account_json: null, date_range_days: 90 },
+      baseline: null, competitors: { candidates:[], confirmed:[], profiles:[], g2_slugs:{} },
+      research: { pipeline_stages: { site_intelligence:{status:'queued'}, permutation_engine:{status:'queued'}, g2_review_mining:{status:'queued'}, reddit_intelligence:{status:'queued'}, serp_analysis:{status:'queued'}, synthesis_scoring:{status:'queued'} }, site_intelligence:null, keyword_universe:null, g2_intelligence:null, reddit_intelligence:null, serp_analysis:null, synthesis:null },
+      pipeline_log: [],
+      pages: { bofu_pages:[], comparison_pages:[], supporting_content:[], striking_distance:[] },
+      calendar: { project_start_date: null, tasks:[] },
+      reports: [], tech_seo: { robots_txt:null, llms_txt:null, sitemap_xml:null, gsc_submissions:[] },
+      content_studio: { settings:{ require_approval:true, plagiarism_threshold:30, personas:[] }, drafts:[], image_library:[] },
+      voice_guide: { documents:[], index:null, index_status:'empty' }
+    };
+
+    // Refresh full state in background
+    refreshProjectState().catch(() => {});
+
+    // Navigate immediately
+    AppState.currentStep = '01';
     window.location.hash = '#step-01';
-  } catch (e) { showToast(e.message, 'error'); }
+    renderCurrentStep();
+
+  } catch (err) { showToast(err.message, 'error'); }
   finally { btn.disabled = false; btn.textContent = 'Create Project →'; }
 }
 
@@ -374,15 +407,21 @@ function openProjectPrompt(slug, name) {
         try {
           const d = await api('POST', '/auth/login', { slug, password: pw });
           if (!d) return;
-          AppState.slug = d.slug;
+          AppState.slug        = d.slug;
           AppState.projectName = d.project_name;
           AppState.authenticated = true;
           closeModal();
+
+          // Load full state first so step_status is accurate, then navigate
           await refreshProjectState();
-          // Navigate to furthest complete step
+
           const status = AppState.project?.step_status || {};
-          const last = Object.entries(status).filter(([,v]) => v === 'complete').map(([k]) => k).sort().pop() || '01';
+          const last = Object.entries(status)
+            .filter(([,v]) => ['complete','ready'].includes(v))
+            .map(([k]) => k).sort().pop() || '01';
+          AppState.currentStep = last;
           window.location.hash = `#step-${last}`;
+          renderCurrentStep();
         } catch (err) { showToast(err.message, 'error'); }
       }}
     ]
