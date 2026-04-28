@@ -1989,7 +1989,7 @@ function handleStudioHash() {
 
 // Patch renderStep01 to inject the Voice Guide tab button
 const _origRenderStep01 = renderStep01;
-function renderStep01() {
+renderStep01 = function() {
   const html = _origRenderStep01();
   // Inject "Voice Guide" tab button into Step 01's tab bar
   return html.replace(
