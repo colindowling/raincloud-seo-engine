@@ -320,21 +320,20 @@ async function renderStep00() {
       <div class="landing-panels">
         <div class="landing-panel">
           <h2 class="panel-title">Create New Project</h2>
-          <form id="create-form" onsubmit="handleCreateProject(event)">
-            <div class="form-group">
-              <label class="form-label">Project Name</label>
-              <input class="form-input" id="new-name" placeholder="Healthicity Q2 2026" required>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Client Domain</label>
-              <input class="form-input" id="new-domain" placeholder="healthicity.com">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Password</label>
-              <input class="form-input" id="new-password" type="password" placeholder="min 6 characters" required minlength="6">
-            </div>
-            <button class="btn btn-primary btn-block" type="submit">Create Project →</button>
-          </form>
+          <div class="form-group">
+            <label class="form-label">Project Name</label>
+            <input class="form-input" id="new-name" placeholder="Healthicity Q2 2026">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Client Domain</label>
+            <input class="form-input" id="new-domain" placeholder="healthicity.com">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input class="form-input" id="new-password" type="password" placeholder="min 6 characters">
+          </div>
+          <button class="btn btn-primary btn-block" id="create-btn">Create Project →</button>
+          <div id="create-error" style="color:#ef4444;font-size:13px;margin-top:8px;display:none"></div>
         </div>
         <div class="landing-panel">
           <h2 class="panel-title">Open Existing Project</h2>
@@ -342,6 +341,64 @@ async function renderStep00() {
         </div>
       </div>
     </div>`;
+
+  // Attach event listener directly — more reliable than onsubmit inline handler
+  const createBtn = document.getElementById('create-btn');
+  if (createBtn) {
+    createBtn.addEventListener('click', async () => {
+      const name   = (document.getElementById('new-name')?.value || '').trim();
+      const domain = (document.getElementById('new-domain')?.value || '').trim();
+      const pw     = (document.getElementById('new-password')?.value || '');
+      const errEl  = document.getElementById('create-error');
+
+      if (!name)       { if(errEl){errEl.textContent='Project name is required';errEl.style.display='block';} return; }
+      if (pw.length < 6) { if(errEl){errEl.textContent='Password must be at least 6 characters';errEl.style.display='block';} return; }
+      if (errEl) errEl.style.display = 'none';
+
+      createBtn.disabled = true;
+      createBtn.textContent = 'Creating…';
+
+      try {
+        const d = await api('POST', '/projects/create', { project_name: name, primary_domain: domain, password: pw });
+        if (!d) throw new Error('No response from server');
+
+        AppState.slug          = d.slug;
+        AppState.projectName   = d.project_name;
+        AppState.authenticated = true;
+
+        // Set full project state immediately so UI is unlocked
+        AppState.project = {
+          slug: d.slug, project_name: d.project_name,
+          step_status: { '00':'complete','01':'ready','02':'locked','03':'locked','04':'locked','05':'locked','06':'locked','07':'locked','08':'locked','09':'locked' },
+          config: {
+            identity: { client_name: name, primary_domain: domain, industry:'', offer_description:'', primary_products:[], target_personas:[], icp_company_size:[], icp_industries:[] },
+            brand: { primary_font:'Inter', secondary_font:'Inter', primary_color:'#3b82f6', secondary_color:'#1e40af', accent_color:'#10b981', background_color:'#ffffff', text_color:'#1f2937', logo_url:'', brand_voice:'Professional', cta_button_text:'Book a Demo', cta_button_url:'' },
+            lead_magnets: [], contact_form: { form_headline:'', fields:['name','company','email'], submission_endpoint:'', confirmation_message:'', notification_email:'' }
+          },
+          analytics:{ ga4_property_id:'', gsc_property_url:'', service_account_json:null, date_range_days:90 },
+          baseline:null, competitors:{ candidates:[], confirmed:[], profiles:[], g2_slugs:{} },
+          research:{ pipeline_stages:{ site_intelligence:{status:'queued'}, permutation_engine:{status:'queued'}, g2_review_mining:{status:'queued'}, reddit_intelligence:{status:'queued'}, serp_analysis:{status:'queued'}, synthesis_scoring:{status:'queued'} }, site_intelligence:null, keyword_universe:null, g2_intelligence:null, reddit_intelligence:null, serp_analysis:null, synthesis:null },
+          pipeline_log:[], pages:{ bofu_pages:[], comparison_pages:[], supporting_content:[], striking_distance:[] },
+          calendar:{ project_start_date:null, tasks:[] }, reports:[], tech_seo:{ robots_txt:null, llms_txt:null, sitemap_xml:null, gsc_submissions:[] },
+          content_studio:{ settings:{ require_approval:true, plagiarism_threshold:30, personas:[] }, drafts:[], image_library:[] },
+          voice_guide:{ documents:[], index:null, index_status:'empty' }
+        };
+
+        // Load full state in background
+        refreshProjectState().catch(() => {});
+
+        // Navigate to step 01
+        AppState.currentStep = '01';
+        window.location.hash = '#step-01';
+        renderCurrentStep();
+
+      } catch(err) {
+        if (errEl) { errEl.textContent = err.message || 'Create failed'; errEl.style.display = 'block'; }
+        createBtn.disabled = false;
+        createBtn.textContent = 'Create Project →';
+      }
+    });
+  }
 }
 
 async function handleCreateProject(e) {
