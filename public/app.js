@@ -55,8 +55,9 @@ function showModal(title, bodyHTML, actions = []) {
   const overlay = document.getElementById('modal-overlay');
   const box = document.getElementById('modal-box');
   if (!overlay || !box) return;
-  const btns = actions.map(a =>
-    `<button class="btn ${a.cls || 'btn-secondary'}" onclick="(${a.onClick.toString()})(this)">${a.label}</button>`
+  // Render buttons with data-action-index — no onclick serialization so closures are preserved
+  const btns = actions.map((a, i) =>
+    `<button class="btn ${a.cls || 'btn-secondary'}" data-action-index="${i}">${a.label}</button>`
   ).join('');
   box.innerHTML = `
     <div class="modal-header">
@@ -66,6 +67,11 @@ function showModal(title, bodyHTML, actions = []) {
     <div class="modal-body">${bodyHTML}</div>
     ${btns ? `<div class="modal-footer">${btns}</div>` : ''}
   `;
+  // Attach handlers via addEventListener — preserves closure context (fixes "slug is not defined")
+  actions.forEach((a, i) => {
+    const btn = box.querySelector(`[data-action-index="${i}"]`);
+    if (btn) btn.addEventListener('click', a.onClick);
+  });
   overlay.classList.remove('hidden');
 }
 
