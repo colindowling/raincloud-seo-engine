@@ -12,14 +12,14 @@ import json
 import os
 import base64
 import time
+import ssl
+import urllib.request
+import urllib.parse
 
 try:
     import requests as _requests
     _HAS_REQUESTS = True
 except ImportError:
-    import urllib.request
-    import urllib.parse
-    import ssl
     _HAS_REQUESTS = False
 
 
@@ -190,7 +190,8 @@ def get_google_access_token(service_account_json, scopes):
 
     req = urllib.request.Request(token_uri, data=token_data)
     req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-    with urllib.request.urlopen(req, timeout=30, context=_ssl_ctx()) as resp:
+    ctx = ssl.create_default_context()
+    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
         token_resp = json.loads(resp.read().decode('utf-8'))
 
     if 'access_token' not in token_resp:
