@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "build": "pip3 install -r requirements.txt --quiet || true"
+    "build": "pip3 install -r requirements.txt --quiet || true",
+    "postinstall": "pip3 install -r requirements.txt --quiet || true"
   },
   "dependencies": {
     "express": "^4.18.2",
