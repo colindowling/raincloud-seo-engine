@@ -92,40 +92,75 @@ def run(job_id, callback_url, project_slug, payload):
 
     # -----------------------------------------------------------------------
     # Step 2: DataForSEO competitors_domain
+    # Run against the TOP Exa-discovered competitors, NOT the client domain.
+    # Rationale: new/small domains only rank for their own brand name, so
+    # competitors_domain returns brand-name variants, not real competitors.
+    # Running against established competitors surfaces their overlapping rivals.
     # -----------------------------------------------------------------------
     post_callback(callback_url, job_id, WORKFLOW_ID, 'running',
-                  log_message='WF02: Running DataForSEO competitors_domain analysis...')
+                  log_message='WF02: Running DataForSEO keyword-overlap analysis...')
+
+    # Build brand fragments to filter out (e.g. 'rncld', 'raincloud')
+    brand_fragments = set()
+    if client_bare:
+        root = client_bare.split('.')[0].lower()
+        brand_fragments.add(root)
+        # Also add any word > 4 chars from the company name in the offer description
+        import re as _re
+        for word in _re.findall(r'\b[a-z]{5,}\b', offer_description.lower()):
+            brand_fragments.add(word)
+
+    def is_brand_match(domain):
+        """True if the domain looks like a brand-name variant of the client."""
+        dom_lower = domain.lower()
+        return any(frag in dom_lower for frag in brand_fragments if len(frag) >= 4)
 
     dfs_domains = []
-    try:
-        dfs_body = [{
-            'target': client_bare,
-            'language_code': 'en',
-            'location_code': 2840,
-            'limit': 20,
-        }]
-        dfs_resp = http_post(
-            'https://api.dataforseo.com/v3/dataforseo_labs/google/competitors_domain/live',
-            dfs_body, headers=dfs_auth(), timeout=60
-        )
-        for task in dfs_resp.get('tasks', []):
-            for item in (task.get('result') or []):
-                for comp in (item.get('items') or []):
-                    d = comp.get('domain', '').lower().lstrip('www.')
-                    if d and d not in AGGREGATOR_DOMAINS and d != client_bare:
-                        dfs_domains.append({
-                            'domain': d,
-                            'intersections': comp.get('intersections', 0),
-                            'competitor_relevance': comp.get('competitor_relevance', 0),
-                            'avg_position': comp.get('avg_position', 0),
-                            'sum_position': comp.get('sum_position', 0),
-                        })
-                        # Weight DFS hits more heavily
-                        domain_scores[d] = domain_scores.get(d, 0) + 3
-    except Exception as e:
-        print(f"[WF02] DataForSEO competitors error: {e}")
 
-    print(f"[WF02] DataForSEO found {len(dfs_domains)} competitors")
+    # Seed domains: use top Exa competitors (most likely to have real keyword data)
+    seed_domains = list(exa_domains)[:5] if exa_domains else []
+
+    # Always also try the client domain — but filter results aggressively
+    targets = list(dict.fromkeys([client_bare] + seed_domains))[:6]
+
+    for target in targets:
+        try:
+            dfs_body = [{'target': target, 'language_code': 'en',
+                         'location_code': 2840, 'limit': 20}]
+            dfs_resp = http_post(
+                'https://api.dataforseo.com/v3/dataforseo_labs/google/competitors_domain/live',
+                dfs_body, headers=dfs_auth(), timeout=60
+            )
+            for task in dfs_resp.get('tasks', []):
+                for item in (task.get('result') or []):
+                    for comp in (item.get('items') or []):
+                        d = comp.get('domain', '').lower().lstrip('www.')
+                        intersections = comp.get('intersections', 0)
+
+                        # Skip: aggregators, social, low overlap, brand variants
+                        if not d: continue
+                        if d in AGGREGATOR_DOMAINS: continue
+                        if d == client_bare: continue
+                        if intersections < 10 and target == client_bare: continue  # brand-name noise
+                        if is_brand_match(d): continue  # e.g. raincloud.network
+
+                        existing = next((x for x in dfs_domains if x['domain'] == d), None)
+                        if existing:
+                            existing['intersections'] += intersections
+                        else:
+                            dfs_domains.append({
+                                'domain': d,
+                                'intersections': intersections,
+                                'competitor_relevance': comp.get('competitor_relevance', 0),
+                                'avg_position': comp.get('avg_position', 0),
+                                'sum_position': comp.get('sum_position', 0),
+                            })
+                        domain_scores[d] = domain_scores.get(d, 0) + 3
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"[WF02] DataForSEO competitors error for {target}: {e}")
+
+    print(f"[WF02] DataForSEO found {len(dfs_domains)} competitors after filtering")
 
     # -----------------------------------------------------------------------
     # Step 3: Merge, rank, take top 10
