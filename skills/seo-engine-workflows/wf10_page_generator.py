@@ -10,7 +10,7 @@ WORKFLOW_ID = 'Page_Generator'
 
 BANNED_PHRASES = [
     'keyword difficulty', 'composite score', 'dataforseo', 'apify',
-    'exa.ai', 'clay enrichment', 'raincloud', 'orchestrator',
+    'exa.ai', 'clay enrichment', 'orchestrator',
     'workflow_id', 'job_id',
 ]
 
@@ -223,7 +223,7 @@ def run(job_id, callback_url, project_slug, payload):
                     "5. Contains NO internal tool names or debug information\n"
                     "Output ONLY the complete HTML, nothing else."
                 )
-            raw = claude_message(SYSTEM_PROMPT, prompt, max_tokens=4000)
+            raw = claude_message(SYSTEM_PROMPT, prompt, max_tokens=8000)
 
             # Strip any markdown code fences
             raw = re.sub(r'^```html\s*', '', raw.strip())
