@@ -392,8 +392,10 @@ router.post('/:slug/read-site', requireAuth, async (req, res) => {
       method: 'POST',
       headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...body, includeDomains: [cleanDomain], numResults: 5,
-        contents: { text: true, numSentences: 30 } })
-    }).then(r => r.json()).catch(e => { console.log('[read-site] exa error:', e.message); return { results: [] }; });
+        contents: { text: true } })
+    }).then(r => r.json())
+      .then(d => { if (!d.results) console.log('[read-site] exa no results:', JSON.stringify(d).slice(0,200)); return d; })
+      .catch(e => { console.log('[read-site] exa error:', e.message); return { results: [] }; });
 
     const [r1, r2, r3, r4] = await Promise.all([
       exa({ query: `${cleanDomain} what does this company do products features pricing`, type: 'neural' }),
@@ -404,7 +406,7 @@ router.post('/:slug/read-site', requireAuth, async (req, res) => {
 
     // Deduplicate by URL and merge all text
     const seen = new Set();
-    const allPages = [...r1.results, ...r2.results, ...r3.results, ...r4.results]
+    const allPages = [...(r1.results||[]), ...(r2.results||[]), ...(r3.results||[]), ...(r4.results||[])]
       .filter(r => { if (seen.has(r.url)) return false; seen.add(r.url); return true; });
 
     let siteText = allPages
