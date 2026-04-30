@@ -13,10 +13,10 @@ WORKFLOW_ID = 'Reddit_Intelligence'
 
 APIFY_BASE = 'https://api.apify.com/v2'
 
+# Generic B2B defaults — industry-specific subs come from Exa discovery
 DEFAULT_SUBREDDITS = [
-    'r/healthcare', 'r/healthit', 'r/compliance', 'r/HIPAA',
     'r/startups', 'r/entrepreneur', 'r/SaaS', 'r/marketing',
-    'r/sales', 'r/automation', 'r/productivity',
+    'r/sales', 'r/automation', 'r/productivity', 'r/smallbusiness',
 ]
 
 QUESTION_SIGNALS = [
@@ -67,7 +67,9 @@ def scrape_reddit_apify(subreddits, search_terms, max_posts=25):
     for sub in subreddits[:8]:
         sub_name = sub.lstrip('r/')
         for term in search_terms[:3]:
-            encoded_term = re.sub(r'[^a-zA-Z0-9 ]', '', term)[:30]
+            # Properly URL-encode search terms
+            from urllib.parse import quote_plus
+            encoded_term = quote_plus(re.sub(r'[^a-zA-Z0-9 \-]', '', term)[:50])
             start_urls.append({
                 'url': f"https://www.reddit.com/r/{sub_name}/search/?q={encoded_term}&sort=top&restrict_sr=1"
             })
@@ -75,8 +77,8 @@ def scrape_reddit_apify(subreddits, search_terms, max_posts=25):
         start_urls.append({'url': f"https://www.reddit.com/r/{sub_name}/hot/"})
 
     input_data = {
-        'startUrls': start_urls[:20],
-        'maxPosts': max_posts,
+        'startUrls': start_urls[:24],
+        'maxItems': max_posts,          # correct key for apify/reddit-scraper
         'includeComments': True,
         'maxComments': 10,
     }
