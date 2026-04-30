@@ -360,13 +360,33 @@ router.post('/:slug/read-site', requireAuth, async (req, res) => {
 
     const fetch = require('node-fetch');
 
-    // Step 1: Exa live-crawl — fetch direct site content
     const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
     const siteUrl = `https://${cleanDomain}`;
 
-    let siteText = '';
+    // ── Step 1a: Raw HTML fetch for CSS/brand extraction ──────────────────────
+    let rawHtml = '';
+    let cssText  = '';
+    let googleFont = '';
+    try {
+      const htmlResp = await fetch(siteUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BrandBot/1.0)' },
+        timeout: 10000
+      });
+      rawHtml = await htmlResp.text();
 
-    // Try 1: Exa contents API with live crawl (fetches the URL directly)
+      // Extract inline <style> blocks
+      const styleMatches = [...rawHtml.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)];
+      cssText = styleMatches.map(m => m[1]).join('\n').slice(0, 6000);
+
+      // Extract Google Font name from CDN links
+      const fontMatch = rawHtml.match(/fonts\.googleapis\.com\/css[^"']*family=([^&"':+]+)/i);
+      if (fontMatch) googleFont = decodeURIComponent(fontMatch[1].replace(/\+/g, ' ').split('|')[0].split(':')[0]);
+    } catch(e) {
+      console.log('[read-site] raw HTML fetch failed:', e.message);
+    }
+
+    // ── Step 1b: Exa live-crawl for text content ──────────────────────────────
+    let siteText = '';
     try {
       const exaContentsResp = await fetch('https://api.exa.ai/contents', {
         method: 'POST',
@@ -383,17 +403,17 @@ router.post('/:slug/read-site', requireAuth, async (req, res) => {
         .join('\n\n')
         .slice(0, 8000);
     } catch(e) {
-      console.log('[read-site] contents API failed:', e.message);
+      console.log('[read-site] Exa contents failed:', e.message);
     }
 
-    // Try 2: Exa search without domain restriction if crawl returned nothing
+    // Exa search fallback
     if (!siteText.trim()) {
       try {
         const exaSearchResp = await fetch('https://api.exa.ai/search', {
           method: 'POST',
           headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            query: `site:${cleanDomain} what does this company do`,
+            query: `site:${cleanDomain} what does this company do products services`,
             numResults: 5,
             type: 'keyword',
             contents: { text: true }
@@ -405,16 +425,20 @@ router.post('/:slug/read-site', requireAuth, async (req, res) => {
           .join('\n\n')
           .slice(0, 8000);
       } catch(e) {
-        console.log('[read-site] search fallback failed:', e.message);
+        console.log('[read-site] Exa search fallback failed:', e.message);
       }
     }
 
-    // Try 3: Use Claude's knowledge of the domain as last resort
     if (!siteText.trim()) {
-      siteText = `Domain: ${cleanDomain}\nNote: Could not fetch live site content. Use general knowledge about this company if available, or return best-guess fields.`;
+      siteText = `Domain: ${cleanDomain}\nNote: Could not fetch live content. Use general knowledge if available.`;
     }
 
-    // Step 2: Claude extracts structured identity from site content
+    // ── Step 2: Claude extracts identity + brand in one call ──────────────────
+    const brandSection = cssText
+      ? `\n\nCSS from site (extract primary colors and fonts):\n${cssText.slice(0, 3000)}`
+      : '';
+    const fontHint = googleFont ? `\nDetected Google Font: ${googleFont}` : '';
+
     const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -423,44 +447,71 @@ router.post('/:slug/read-site', requireAuth, async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-20250514',
-        max_tokens: 1000,
-        system: 'You are a business analyst. Extract structured information from website content. Return ONLY valid JSON, no explanation.',
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 1200,
+        system: 'You are a business analyst and brand designer. Extract structured information from website content and CSS. Return ONLY valid JSON — no markdown fences, no explanation.',
         messages: [{
           role: 'user',
-          content: `Analyze this website content and extract business identity information.
+          content: `Analyze this website and extract business identity AND brand style.
 
-Website domain: ${cleanDomain}
-Content:
-${siteText}
+Website: ${cleanDomain}${fontHint}
 
-Return ONLY this JSON structure (no markdown, no explanation):
+Page content:
+${siteText}${brandSection}
+
+Return ONLY this JSON (no markdown, no code fences):
 {
-  "client_name": "Company name (proper case)",
-  "offer_description": "2-3 sentences: what they sell, who they sell it to, and the core outcome they deliver. Be specific.",
-  "industry": "Industry/vertical in 2-4 words (e.g. 'B2B SaaS Marketing', 'Healthcare Compliance Software')",
-  "primary_products": ["product or service 1", "product or service 2", "product or service 3"],
-  "target_personas": ["Job title/role 1", "Job title/role 2", "Job title/role 3"],
+  "client_name": "Company name in proper case",
+  "offer_description": "2-3 sentences: what they sell, who they sell it to, core outcome. Be specific.",
+  "industry": "Industry/vertical in 2-4 words (e.g. 'B2B SaaS Marketing')",
+  "primary_products": ["product 1", "product 2", "product 3"],
+  "target_personas": ["Job Title 1", "Job Title 2", "Job Title 3"],
   "icp_company_size": ["SMB", "Mid-Market", "Enterprise"],
-  "icp_industries": ["industry 1", "industry 2", "industry 3"]
+  "icp_industries": ["industry 1", "industry 2"],
+  "brand": {
+    "primary_color": "#hex — the dominant brand/CTA color from CSS or buttons",
+    "secondary_color": "#hex — secondary/dark color",
+    "accent_color": "#hex — highlight or link color",
+    "background_color": "#hex — page background (usually #ffffff or similar)",
+    "text_color": "#hex — main body text color (usually dark)",
+    "primary_font": "Font name for headings (from Google Fonts link or CSS font-family)",
+    "secondary_font": "Font name for body text"
+  }
 }`
         }]
       })
     });
 
     const claudeData = await claudeResp.json();
-    const rawText = claudeData.content?.[0]?.text || '{}';
+
+    // Log error if Claude returned an API error
+    if (claudeData.type === 'error') {
+      console.error('[read-site] Claude API error:', JSON.stringify(claudeData.error));
+      return res.status(500).json({ error: `Claude API error: ${claudeData.error?.message || 'unknown'}` });
+    }
+
+    const rawText = claudeData.content?.[0]?.text || '';
+    if (!rawText) {
+      console.error('[read-site] Claude returned empty content. Full response:', JSON.stringify(claudeData));
+      return res.status(500).json({ error: 'Claude returned empty response. Check server logs.' });
+    }
 
     let extracted;
     try {
-      // Strip markdown fences if present
       const clean = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/,'').trim();
       extracted = JSON.parse(clean);
-    } catch {
+    } catch(parseErr) {
+      console.error('[read-site] JSON parse error. Raw Claude text:', rawText.slice(0, 500));
       return res.status(500).json({ error: 'Could not parse site intelligence. Try again or fill in manually.' });
     }
 
-    return res.json({ extracted, domain_read: cleanDomain, chars_read: siteText.length });
+    return res.json({
+      extracted,
+      brand: extracted.brand || null,
+      domain_read: cleanDomain,
+      chars_read: siteText.length,
+      css_chars_read: cssText.length,
+    });
 
   } catch (err) {
     console.error('[projects] read-site error:', err.message);
