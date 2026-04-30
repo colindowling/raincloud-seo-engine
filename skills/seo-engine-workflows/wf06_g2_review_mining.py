@@ -21,48 +21,57 @@ def apify_headers():
 
 def run_apify_g2(slug, max_reviews=100):
     """
-    Run Apify G2 scraper for a given slug.
-    Returns list of review dicts.
+    Fetch G2 review data for a given slug.
+    Primary: Apify actor 'curious_coder~g2-scraper' (verified public actor).
+    Fallback: Exa crawl of G2 review pages with text extraction.
     """
+    from helpers import exa_search
     g2_url = f"https://www.g2.com/products/{slug}/reviews"
     token = os.environ.get('APIFY_TOKEN', '')
 
-    # Primary actor: apify~g2-review-scraper
-    actors_to_try = ['apify~g2-review-scraper', 'apify~web-scraper']
-
-    for actor_id in actors_to_try:
+    # Primary: Apify G2 scraper (correct public actor ID)
+    if token:
         try:
             input_data = {
                 'startUrls': [{'url': g2_url}],
-                'maxReviews': max_reviews,
-                'includeReviewBody': True,
+                'maxItems': max_reviews,
+                'proxyConfig': {'useApifyProxy': True},
             }
-            url = f"{APIFY_BASE}/acts/{actor_id}/run-sync-get-dataset-items?token={token}"
+            url = f"{APIFY_BASE}/acts/curious_coder~g2-scraper/run-sync-get-dataset-items?token={token}"
             resp = http_post(url, input_data, timeout=300)
-
             if isinstance(resp, list) and resp:
-                print(f"[WF06] Apify {actor_id} returned {len(resp)} items for {slug}")
+                print(f"[WF06] Apify G2 scraper returned {len(resp)} reviews for {slug}")
                 return resp
         except Exception as e:
-            print(f"[WF06] Apify actor {actor_id} error for {slug}: {e}")
-            continue
+            print(f"[WF06] Apify G2 scraper error for {slug}: {e}")
 
-    # Fallback: try Exa to get review text
+    # Fallback: Exa crawl of G2 review pages (multiple pages for volume)
+    print(f"[WF06] Using Exa fallback for G2 reviews: {slug}")
     try:
-        from helpers import exa_search
-        exa_resp = exa_search(
-            query=f"site:g2.com/products/{slug} reviews",
-            num_results=10,
-            include_domains=['g2.com'],
-            contents={'text': True, 'numSentences': 15},
-            search_type='keyword',
-        )
-        # Synthesise fake review objects from Exa text
         reviews = []
-        for item in exa_resp.get('results', []):
-            text = item.get('text', '') or ''
-            if text.strip():
-                reviews.append({'reviewBody': text[:2000], 'rating': None, 'title': item.get('title', '')})
+        for page_num in range(1, 4):  # Pages 1-3
+            url_with_page = f"{g2_url}?page={page_num}"
+            exa_resp = exa_search(
+                query=f"reviews pros cons {slug} g2.com",
+                num_results=5,
+                include_domains=['g2.com'],
+                contents={'text': True},
+                search_type='keyword',
+            )
+            for item in exa_resp.get('results', []):
+                text = item.get('text', '') or ''
+                if text.strip() and len(text) > 100:
+                    # Split into review-sized chunks for better phrase extraction
+                    chunks = [text[i:i+800] for i in range(0, min(len(text), 4000), 800)]
+                    for chunk in chunks:
+                        reviews.append({
+                            'reviewBody': chunk,
+                            'rating': None,
+                            'title': item.get('title', ''),
+                            'url': item.get('url', ''),
+                        })
+            time.sleep(0.5)
+        print(f"[WF06] Exa returned {len(reviews)} review chunks for {slug}")
         return reviews
     except Exception as e:
         print(f"[WF06] Exa G2 fallback error for {slug}: {e}")
@@ -117,7 +126,7 @@ def extract_frustration_phrases(negative_texts, competitor_name):
         '[{"phrase": "...", "frequency": N}, ...]'
     )
     try:
-        raw = claude_message(system, user, max_tokens=600)
+        raw = claude_message(system, user, max_tokens=1500)
         # Strip markdown code fences if present
         raw = re.sub(r'```(?:json)?', '', raw).strip().strip('`')
         phrases = json.loads(raw)
