@@ -12,11 +12,21 @@ from helpers import (http_post, http_get, post_callback,
 WORKFLOW_ID = 'Competitor_Discovery'
 
 AGGREGATOR_DOMAINS = {
-    'g2.com', 'capterra.com', 'linkedin.com', 'reddit.com',
-    'wikipedia.org', 'trustpilot.com', 'getapp.com', 'softwareadvice.com',
-    'producthunt.com', 'crunchbase.com', 'glassdoor.com', 'yelp.com',
-    'gartner.com', 'forrester.com', 'inc.com', 'forbes.com',
-    'techcrunch.com', 'venturebeat.com',
+    # Review / comparison sites
+    'g2.com', 'capterra.com', 'getapp.com', 'softwareadvice.com',
+    'trustpilot.com', 'trustradius.com', 'gartner.com', 'forrester.com',
+    # Social / content
+    'linkedin.com', 'reddit.com', 'twitter.com', 'x.com', 'instagram.com',
+    'facebook.com', 'youtube.com', 'tiktok.com', 'medium.com', 'substack.com',
+    # General web
+    'wikipedia.org', 'producthunt.com', 'crunchbase.com', 'glassdoor.com',
+    'yelp.com', 'inc.com', 'forbes.com', 'techcrunch.com', 'venturebeat.com',
+    'businessinsider.com', 'entrepreneur.com', 'hbr.org', 'zdnet.com',
+    # AI model hosts that flood results
+    'huggingface.co', 'openai.com', 'anthropic.com', 'xai.com', 'x.ai',
+    'perplexity.ai', 'mistral.ai',
+    # Marketplaces / app stores
+    'appsumo.com', 'alternativeto.net', 'slashdot.org', 'sourceforge.net',
 }
 
 
@@ -42,10 +52,15 @@ def run(job_id, callback_url, project_slug, payload):
     post_callback(callback_url, job_id, WORKFLOW_ID, 'running',
                   log_message='WF02: Running Exa semantic competitor search...')
 
+    # Queries are anchored on OFFER + INDUSTRY — never on the client domain name.
+    # Domain-anchored queries return social profiles, review sites, and name matches.
+    # Category-anchored queries return actual product competitors.
     exa_queries = [
-        f"Companies that compete with {client_bare} providing {offer_description}",
-        f"Best alternatives to {client_bare} for {industry}",
-        f"Top {industry} software companies similar to {client_bare}",
+        f"Best {industry} software tools — top vendors and platforms",
+        f"Top companies that provide {offer_description}",
+        f"{industry} software comparison — leading solutions",
+        f"Alternatives for {offer_description} — vendor list",
+        f"Best {industry} platforms for B2B teams",
     ]
 
     exa_domains = set()
@@ -61,14 +76,15 @@ def run(job_id, callback_url, project_slug, payload):
             for item in resp.get('results', []):
                 url = item.get('url', '')
                 d = extract_domain(url)
-                # strip subdomains past one level
+                # Normalise to root domain only
                 parts = d.split('.')
                 if len(parts) > 2:
                     d = '.'.join(parts[-2:])
+                # Skip aggregators, social, AI model hosts, and the client itself
                 if d and d not in AGGREGATOR_DOMAINS and d != client_bare:
                     exa_domains.add(d)
         except Exception as e:
-            print(f"[WF02] Exa query error ({q[:40]}): {e}")
+            print(f"[WF02] Exa query error ({q[:60]}): {e}")
 
     print(f"[WF02] Exa found {len(exa_domains)} unique competitor domains")
     for d in exa_domains:
