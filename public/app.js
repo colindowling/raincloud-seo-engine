@@ -251,7 +251,7 @@ function renderLayout(content) {
         <div class="sidebar-logo">
           <div class="logo-mark">RC</div>
           <div>
-            <div class="logo-title">RAINCLOUD</div>
+            <div class="logo-title">The Beast</div>
             <div class="logo-subtitle">SEO Engine</div>
           </div>
         </div>
@@ -320,7 +320,7 @@ async function renderStep00() {
     <div class="landing-layout">
       <div class="landing-brand">
         <div class="landing-logo-mark">RC</div>
-        <h1 class="landing-title">RAINCLOUD SEO Engine</h1>
+        <h1 class="landing-title">The Beast</h1>
         <p class="landing-tagline">Data-driven BoFu content strategy — from research to publish-ready HTML</p>
       </div>
       <div class="landing-panels">
