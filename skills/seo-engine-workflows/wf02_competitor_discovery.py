@@ -35,33 +35,58 @@ def run(job_id, callback_url, project_slug, payload):
     payload: { client_domain, offer_description, industry, gsc_top_keywords }
     returns: { competitor_candidates, total_candidates_evaluated, top_10 }
     """
-    client_domain = payload.get('client_domain', '')
-    offer_description = payload.get('offer_description', '')
-    industry = payload.get('industry', '')
-    gsc_top_keywords = payload.get('gsc_top_keywords', [])
+    client_domain     = payload.get('client_domain', '')
+    client_name       = payload.get('client_name', '')
+    offer_description = payload.get('offer_description', '') or ''
+    industry          = payload.get('industry', '') or ''
+    primary_products  = payload.get('primary_products', []) or []
+    target_personas   = payload.get('target_personas', []) or []
+    gsc_top_keywords  = payload.get('gsc_top_keywords', [])
 
     post_callback(callback_url, job_id, WORKFLOW_ID, 'running',
                   log_message=f'WF02: Starting competitor discovery for {client_domain}...')
 
     client_bare = extract_domain(client_domain)
-    domain_scores = {}   # domain -> overlap_count
+    domain_scores = {}
 
     # -----------------------------------------------------------------------
     # Step 1: Exa semantic competitor search
+    # Build queries from OFFER + INDUSTRY, never from the domain name.
+    # Fall back to generic B2B queries if identity not yet filled in.
     # -----------------------------------------------------------------------
     post_callback(callback_url, job_id, WORKFLOW_ID, 'running',
-                  log_message='WF02: Running Exa semantic competitor search...')
+                  log_message='WF02: Running Exa category-based competitor search...')
 
-    # Queries are anchored on OFFER + INDUSTRY — never on the client domain name.
-    # Domain-anchored queries return social profiles, review sites, and name matches.
-    # Category-anchored queries return actual product competitors.
-    exa_queries = [
-        f"Best {industry} software tools — top vendors and platforms",
-        f"Top companies that provide {offer_description}",
-        f"{industry} software comparison — leading solutions",
-        f"Alternatives for {offer_description} — vendor list",
-        f"Best {industry} platforms for B2B teams",
-    ]
+    # Build the richest possible search context from available identity data
+    product_hint = f" — including {', '.join(primary_products[:3])}" if primary_products else ""
+    persona_hint = f" for {', '.join(target_personas[:2])}" if target_personas else ""
+
+    if industry and offer_description:
+        exa_queries = [
+            f"Best {industry} software{product_hint} — top vendors and platforms",
+            f"Leading companies that provide {offer_description[:120]}{persona_hint}",
+            f"{industry} tools comparison: top alternatives and competitors",
+            f"Best {industry} platforms{persona_hint} — vendor shortlist",
+        ]
+    elif industry:
+        exa_queries = [
+            f"Best {industry} software — top B2B vendors and platforms",
+            f"{industry} tools comparison — leading solutions",
+            f"Top {industry} companies — competitive landscape",
+        ]
+    elif offer_description:
+        exa_queries = [
+            f"Companies that provide {offer_description[:120]}",
+            f"Best tools for {offer_description[:80]} — vendor comparison",
+        ]
+    else:
+        # Nothing filled in — log it and use the domain to infer category
+        print(f"[WF02] WARNING: offer_description and industry are empty. "
+              f"Please complete Step 01 identity fields for accurate competitor discovery.")
+        exa_queries = [
+            f"B2B SaaS software vendors — competitive landscape",
+            f"Top B2B revenue intelligence and GTM software companies",
+        ]
 
     exa_domains = set()
     for q in exa_queries:
@@ -76,11 +101,9 @@ def run(job_id, callback_url, project_slug, payload):
             for item in resp.get('results', []):
                 url = item.get('url', '')
                 d = extract_domain(url)
-                # Normalise to root domain only
                 parts = d.split('.')
                 if len(parts) > 2:
                     d = '.'.join(parts[-2:])
-                # Skip aggregators, social, AI model hosts, and the client itself
                 if d and d not in AGGREGATOR_DOMAINS and d != client_bare:
                     exa_domains.add(d)
         except Exception as e:
@@ -96,23 +119,23 @@ def run(job_id, callback_url, project_slug, payload):
     post_callback(callback_url, job_id, WORKFLOW_ID, 'running',
                   log_message='WF02: Running DataForSEO keyword-overlap analysis...')
 
-    # Brand root for filtering (ONLY the domain name itself, e.g. 'rncld' or 'raincloud')
-    # Do NOT use words from offer_description — they will false-positive on real competitors
+    # Brand filter: block domains that ARE the client brand, not real competitors.
+    # Uses domain root + client_name (e.g. 'rncld' AND 'raincloud').
+    # Intentionally narrow — only exact brand words, nothing from offer/industry.
     import re as _re
-    brand_root = client_bare.split('.')[0].lower()  # e.g. 'rncld'
+    brand_words = set()
+    brand_words.add(client_bare.split('.')[0].lower())   # e.g. 'rncld'
+    if client_name:
+        # Split company name into words, add any word >= 4 chars
+        for word in _re.findall(r'[a-zA-Z]{4,}', client_name.lower()):
+            brand_words.add(word)                         # e.g. 'raincloud'
 
-    # Also derive the human brand name if it appears in offer/industry
-    # e.g. if offer contains "raincloud" but domain is rncld.com
-    client_name_words = set()
-    client_name_words.add(brand_root)
-    # Extract capitalised proper nouns from offer that might be the brand name
-    for word in _re.findall(r'\b[A-Z][a-z]{3,}\b', offer_description):
-        client_name_words.add(word.lower())
+    print(f"[WF02] Brand filter words: {brand_words}")
 
     def is_brand_variant(domain):
-        """True only if the domain literally contains the client's brand name."""
+        """True only if domain contains the client's actual brand name."""
         d = domain.lower()
-        return any(name in d for name in client_name_words if len(name) >= 4)
+        return any(word in d for word in brand_words if len(word) >= 4)
 
     dfs_domains = []
 
