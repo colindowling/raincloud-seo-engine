@@ -7,7 +7,7 @@ const cookieParser = require('cookie-parser');
 const path        = require('path');
 const fs          = require('fs');
 
-const { ensureDataRoot } = require('./utils/state');
+const { ensureDataRoot, warmCache } = require('./utils/state');
 
 // ─── App setup ────────────────────────────────────────────────────────────────
 
@@ -62,6 +62,9 @@ app.use((err, req, res, _next) => {
 const PORT = process.env.PORT || 3000;
 
 ensureDataRoot();
+
+// Pre-warm in-memory cache from DB (non-blocking — server starts immediately)
+warmCache().catch(e => console.error('[server] Cache warm error:', e.message));
 
 app.listen(PORT, () => {
   console.log(`\n╔══════════════════════════════════════════════╗`);
