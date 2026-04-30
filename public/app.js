@@ -785,8 +785,19 @@ async function readSite() {
       });
     }
 
-    if (status) status.textContent = `✓ Read ${d.chars_read?.toLocaleString() || ''} characters from ${d.domain_read}. Review the fields below and adjust anything that's off, then click Save Identity.`;
-    showToast('Site read — fields pre-filled. Review and save.', 'success');
+    // Populate brand/style fields from CSS extraction
+    const brand = d.brand || ex.brand || {};
+    if (brand.primary_color)    { const el = document.getElementById('br-color-primary');    if(el) el.value = brand.primary_color; }
+    if (brand.secondary_color)  { const el = document.getElementById('br-color-secondary');  if(el) el.value = brand.secondary_color; }
+    if (brand.accent_color)     { const el = document.getElementById('br-color-accent');     if(el) el.value = brand.accent_color; }
+    if (brand.background_color) { const el = document.getElementById('br-color-bg');         if(el) el.value = brand.background_color; }
+    if (brand.text_color)       { const el = document.getElementById('br-color-text');       if(el) el.value = brand.text_color; }
+    if (brand.primary_font)     { const el = document.getElementById('br-font-primary');     if(el) el.value = brand.primary_font; }
+    if (brand.secondary_font)   { const el = document.getElementById('br-font-body');        if(el) el.value = brand.secondary_font; }
+
+    const cssNote = d.css_chars_read > 0 ? ` + ${d.css_chars_read.toLocaleString()} chars of CSS for brand colors` : '';
+    if (status) status.textContent = `✓ Read ${d.chars_read?.toLocaleString() || ''} characters from ${d.domain_read}${cssNote}. Review the fields below and save.`;
+    showToast('Site read — identity and brand fields pre-filled. Review and save.', 'success');
 
   } catch(e) {
     if (status) { status.style.display = 'none'; }
