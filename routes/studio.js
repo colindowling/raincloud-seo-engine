@@ -33,9 +33,12 @@ function autoSelectCTA(cluster, state) {
   const lm = state.config?.lead_magnets || [];
   const kw = cluster.primary_keyword.toLowerCase();
 
-  // Rule 1: if cluster has internal_links_out pointing to a page, use demo CTA
+  // Rule 1: if cluster has internal_links_out pointing to a BoFu page, use demo CTA
+  // internal_links_out is an array of slug strings (not objects), so compare directly
   const linkedPage = allPages.find(p =>
-    (cluster.internal_links_out || []).some(l => l.destination === p.recommended_slug)
+    (cluster.internal_links_out || []).some(l =>
+      (typeof l === 'string' ? l : l.destination || l.slug || '') === p.recommended_slug
+    )
   );
   if (linkedPage) {
     return {
@@ -157,10 +160,16 @@ router.post('/:slug/drafts/generate/:clusterId', requireAuth, async (req, res) =
     const state = getState(slug);
     if (!state) return res.status(404).json({ error: 'Project not found' });
 
-    const cluster = (state.pages.supporting_content || [])
-      .find(c => c.cluster_id === clusterId);
+    // Search all page arrays — not just supporting_content
+    const allPageArrays = [
+      ...(state.pages.supporting_content || []),
+      ...(state.pages.bofu_pages         || []),
+      ...(state.pages.comparison_pages   || []),
+      ...(state.pages.striking_distance  || []),
+    ];
+    const cluster = allPageArrays.find(c => c.cluster_id === clusterId);
     if (!cluster) {
-      return res.status(404).json({ error: `Cluster "${clusterId}" not found` });
+      return res.status(404).json({ error: `Cluster "${clusterId}" not found in any page group` });
     }
 
     const now     = new Date().toISOString();
