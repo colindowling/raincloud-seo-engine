@@ -307,7 +307,7 @@ def run(job_id, callback_url, project_slug, payload):
                 f"Format preference: {sa.get('content_format_preference', {}).get('preferred', '')}\n"
                 "What content angle is missing from page 1?"
             )
-            gap_analysis = claude_message(system, user, max_tokens=80)
+            gap_analysis = claude_message(system, user, max_tokens=250)
             serp_analysis[cid]['content_gap_analysis'] = gap_analysis.strip()
             time.sleep(0.4)
         except Exception as e:
