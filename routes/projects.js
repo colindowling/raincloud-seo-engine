@@ -363,62 +363,71 @@ router.post('/:slug/read-site', requireAuth, async (req, res) => {
     const cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
     const siteUrl = `https://${cleanDomain}`;
 
-    // ── Step 1a: Raw HTML fetch for CSS/brand extraction ──────────────────────
+    // ── Step 1: Fetch homepage HTML directly ─────────────────────────────────────
+    // Primary source — direct HTTP fetch gets real content even on Exa-unindexed sites.
     let rawHtml = '';
     let cssText  = '';
     let googleFont = '';
+    let directText = '';
+
     try {
       const htmlResp = await fetch(siteUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BrandBot/1.0)' },
-        timeout: 10000
+        headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+        timeout: 12000,
       });
       rawHtml = await htmlResp.text();
 
-      // Extract inline <style> blocks
+      // Extract CSS variables and style blocks for brand extraction
       const styleMatches = [...rawHtml.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)];
       cssText = styleMatches.map(m => m[1]).join('\n').slice(0, 6000);
 
-      // Extract Google Font name from CDN links
+      // Google Font detection
       const fontMatch = rawHtml.match(/fonts\.googleapis\.com\/css[^"']*family=([^&"':+]+)/i);
       if (fontMatch) googleFont = decodeURIComponent(fontMatch[1].replace(/\+/g, ' ').split('|')[0].split(':')[0]);
+
+      // Strip all HTML tags to get readable text
+      directText = rawHtml
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')   // remove scripts
+        .replace(/<style[\s\S]*?<\/style>/gi,  ' ')    // remove style blocks
+        .replace(/<[^>]+>/g, ' ')                       // strip remaining tags
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 15000);
+
+      console.log(`[read-site] Direct HTML fetch: ${rawHtml.length} chars HTML, ${directText.length} chars text`);
     } catch(e) {
-      console.log('[read-site] raw HTML fetch failed:', e.message);
+      console.log('[read-site] Direct HTML fetch failed:', e.message);
     }
 
-    // ── Step 1b: Deep site crawl via Exa search (includeDomains) ────────────────
-    // Run 4 targeted searches to pull content from across the entire site.
-    // This works even on JS-rendered sites since Exa has pre-indexed them.
-    const exa = (body) => fetch('https://api.exa.ai/search', {
-      method: 'POST',
-      headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...body, includeDomains: [cleanDomain], numResults: 5,
-        contents: { text: true } })
-    }).then(r => r.json())
-      .then(d => { if (!d.results) console.log('[read-site] exa no results:', JSON.stringify(d).slice(0,200)); return d; })
-      .catch(e => { console.log('[read-site] exa error:', e.message); return { results: [] }; });
+    // ── Step 2: Exa supplement (adds content from deeper pages if available) ───
+    let exaText = '';
+    try {
+      const exa = (body) => fetch('https://api.exa.ai/search', {
+        method: 'POST',
+        headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, includeDomains: [cleanDomain], numResults: 4, contents: { text: true } })
+      }).then(r => r.json()).catch(() => ({ results: [] }));
 
-    const [r1, r2, r3, r4] = await Promise.all([
-      exa({ query: `${cleanDomain} what does this company do products features pricing`, type: 'neural' }),
-      exa({ query: `${cleanDomain} about team mission customers who we serve`,           type: 'neural' }),
-      exa({ query: `${cleanDomain} case studies testimonials results outcomes`,          type: 'neural' }),
-      exa({ query: `${cleanDomain} solutions integrations how it works`,                 type: 'neural' }),
-    ]);
+      const [r1, r2] = await Promise.all([
+        exa({ query: `${cleanDomain} products features services pricing`, type: 'neural' }),
+        exa({ query: `${cleanDomain} about customers outcomes`, type: 'neural' }),
+      ]);
+      const seen = new Set();
+      exaText = [...(r1.results||[]), ...(r2.results||[])]
+        .filter(r => { if(seen.has(r.url)) return false; seen.add(r.url); return true; })
+        .map(r => `=== ${r.title||r.url} ===\n${r.text||''}`)
+        .join('\n\n')
+        .slice(0, 8000);
+      if (exaText) console.log(`[read-site] Exa supplement: ${exaText.length} chars`);
+    } catch(e) {
+      console.log('[read-site] Exa supplement failed:', e.message);
+    }
 
-    // Deduplicate by URL and merge all text
-    const seen = new Set();
-    const allPages = [...(r1.results||[]), ...(r2.results||[]), ...(r3.results||[]), ...(r4.results||[])]
-      .filter(r => { if (seen.has(r.url)) return false; seen.add(r.url); return true; });
+    // Combine: direct fetch is primary, Exa fills in additional pages
+    let siteText = [directText, exaText].filter(Boolean).join('\n\n===\n\n').slice(0, 20000);
 
-    let siteText = allPages
-      .map(r => `=== ${r.title || r.url} ===\n${r.text || ''}`)
-      .join('\n\n')
-      .slice(0, 20000);   // 20k chars — full site context
-
-    console.log(`[read-site] Exa returned ${allPages.length} unique pages, ${siteText.length} chars`);
-
-    // Hard fallback if Exa returned nothing
     if (!siteText.trim()) {
-      siteText = `Domain: ${cleanDomain}\nNote: Could not fetch live content via Exa. Use general knowledge if available.`;
+      return res.status(422).json({ error: `Could not fetch content from ${cleanDomain}. Please fill in the fields manually.` });
     }
 
     // ── Step 2: Claude extracts identity + brand in one call ──────────────────
