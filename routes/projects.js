@@ -385,52 +385,38 @@ router.post('/:slug/read-site', requireAuth, async (req, res) => {
       console.log('[read-site] raw HTML fetch failed:', e.message);
     }
 
-    // ── Step 1b: Exa live-crawl for text content ──────────────────────────────
-    let siteText = '';
-    try {
-      const exaContentsResp = await fetch('https://api.exa.ai/contents', {
-        method: 'POST',
-        headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          urls: [siteUrl, `${siteUrl}/about`, `${siteUrl}/services`],
-          text: true,
-          livecrawl: 'always'
-        })
-      });
-      const contentsData = await exaContentsResp.json();
-      siteText = (contentsData.results || [])
-        .map(r => [r.url, r.title || '', r.text || ''].join('\n'))
-        .join('\n\n')
-        .slice(0, 8000);
-    } catch(e) {
-      console.log('[read-site] Exa contents failed:', e.message);
-    }
+    // ── Step 1b: Deep site crawl via Exa search (includeDomains) ────────────────
+    // Run 4 targeted searches to pull content from across the entire site.
+    // This works even on JS-rendered sites since Exa has pre-indexed them.
+    const exa = (body) => fetch('https://api.exa.ai/search', {
+      method: 'POST',
+      headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, includeDomains: [cleanDomain], numResults: 5,
+        contents: { text: true, numSentences: 30 } })
+    }).then(r => r.json()).catch(e => { console.log('[read-site] exa error:', e.message); return { results: [] }; });
 
-    // Exa search fallback
-    if (!siteText.trim()) {
-      try {
-        const exaSearchResp = await fetch('https://api.exa.ai/search', {
-          method: 'POST',
-          headers: { 'x-api-key': EXA_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: `site:${cleanDomain} what does this company do products services`,
-            numResults: 5,
-            type: 'keyword',
-            contents: { text: true }
-          })
-        });
-        const searchData = await exaSearchResp.json();
-        siteText = (searchData.results || [])
-          .map(r => [r.title, r.text || ''].join('\n'))
-          .join('\n\n')
-          .slice(0, 8000);
-      } catch(e) {
-        console.log('[read-site] Exa search fallback failed:', e.message);
-      }
-    }
+    const [r1, r2, r3, r4] = await Promise.all([
+      exa({ query: `${cleanDomain} what does this company do products features pricing`, type: 'neural' }),
+      exa({ query: `${cleanDomain} about team mission customers who we serve`,           type: 'neural' }),
+      exa({ query: `${cleanDomain} case studies testimonials results outcomes`,          type: 'neural' }),
+      exa({ query: `${cleanDomain} solutions integrations how it works`,                 type: 'neural' }),
+    ]);
 
+    // Deduplicate by URL and merge all text
+    const seen = new Set();
+    const allPages = [...r1.results, ...r2.results, ...r3.results, ...r4.results]
+      .filter(r => { if (seen.has(r.url)) return false; seen.add(r.url); return true; });
+
+    let siteText = allPages
+      .map(r => `=== ${r.title || r.url} ===\n${r.text || ''}`)
+      .join('\n\n')
+      .slice(0, 20000);   // 20k chars — full site context
+
+    console.log(`[read-site] Exa returned ${allPages.length} unique pages, ${siteText.length} chars`);
+
+    // Hard fallback if Exa returned nothing
     if (!siteText.trim()) {
-      siteText = `Domain: ${cleanDomain}\nNote: Could not fetch live content. Use general knowledge if available.`;
+      siteText = `Domain: ${cleanDomain}\nNote: Could not fetch live content via Exa. Use general knowledge if available.`;
     }
 
     // ── Step 2: Claude extracts identity + brand in one call ──────────────────
