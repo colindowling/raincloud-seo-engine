@@ -1,63 +1,84 @@
 #!/usr/bin/env python3
 """
-WF03 — Competitor Enrichment via Clay + Exa
+WF03 — Competitor Enrichment via Exa
 Enriches confirmed competitor list with company data and messaging intelligence.
+Uses Exa semantic search + Claude extraction (Clay API endpoint no longer used).
 """
 import os
 import time
 import re
-from helpers import (http_post, post_callback, exa_search, extract_domain)
+import json
+from helpers import (http_post, post_callback, exa_search, claude_message, extract_domain)
 
 WORKFLOW_ID = 'Competitor_Enrichment_Clay'
 
-CLAY_API_BASE = 'https://api.clay.run/v1'
 
+def exa_firmographic_enrich(domain):
+    """
+    Fetch firmographic data for a domain via Exa + Claude.
+    Searches Crunchbase, LinkedIn, and the company's own about/pricing pages.
+    """
+    company_name_guess = domain.split('.')[0].capitalize()
+    queries = [
+        f"{company_name_guess} company employees funding headquarters founded site:crunchbase.com OR site:linkedin.com",
+        f"{domain} about company overview",
+    ]
 
-def clay_enrich_domain(domain):
-    """Enrich a domain via Clay API. Returns dict of firmographic data."""
-    api_key = os.environ.get('CLAY_API_KEY', '')
-    headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Accept': 'application/json',
-    }
-    payload = {
-        'query': domain,
-        'type': 'company',
-        'fields': [
-            'company_name', 'employee_count', 'funding_status',
-            'hq', 'linkedin_url', 'founded', 'tech_stack',
-            'revenue_range', 'description',
-        ],
-    }
-    try:
-        resp = http_post(f'{CLAY_API_BASE}/search', payload, headers=headers, timeout=45)
-        data = resp.get('data', resp)
-        if isinstance(data, list) and data:
-            data = data[0]
+    all_texts = []
+    for q in queries:
+        try:
+            resp = exa_search(
+                query=q,
+                num_results=5,
+                contents={'text': True},
+                search_type='neural',
+                use_autoprompt=False,
+            )
+            for item in resp.get('results', []):
+                text = (item.get('text', '') or '')[:1500]
+                if text.strip():
+                    all_texts.append(text)
+        except Exception as e:
+            print(f"[WF03] Exa firmographic error for {domain}: {e}")
+
+    combined = '\n---\n'.join(all_texts[:3])[:3500]
+    if not combined.strip():
         return {
-            'company_name': data.get('company_name') or data.get('name', ''),
-            'employee_count': data.get('employee_count') or data.get('employees', ''),
-            'funding_status': data.get('funding_status') or data.get('funding', ''),
-            'hq': data.get('hq') or data.get('headquarters', '') or data.get('location', ''),
-            'linkedin_url': data.get('linkedin_url') or data.get('linkedin', ''),
-            'founded': data.get('founded') or data.get('founded_year', ''),
-            'tech_stack': data.get('tech_stack') or data.get('technologies', []),
+            'company_name': company_name_guess,
+            'employee_count': '', 'funding_status': '', 'hq': '',
+            'linkedin_url': '', 'founded': '', 'revenue_range': '',
+            'description': '',
+        }
+
+    system = (
+        "You are a business intelligence analyst. Extract firmographic data from the text below. "
+        "Return ONLY a JSON object with these keys: company_name, employee_count, funding_status, "
+        "hq, linkedin_url, founded, revenue_range, description. "
+        "Use empty string for any field you cannot find. No markdown, pure JSON."
+    )
+    user = f"Domain: {domain}\n\nText:\n{combined}"
+
+    try:
+        raw = claude_message(system, user, max_tokens=400)
+        raw = re.sub(r'```(?:json)?', '', raw).strip().strip('`')
+        data = json.loads(raw)
+        return {
+            'company_name': data.get('company_name', company_name_guess),
+            'employee_count': data.get('employee_count', ''),
+            'funding_status': data.get('funding_status', ''),
+            'hq': data.get('hq', ''),
+            'linkedin_url': data.get('linkedin_url', ''),
+            'founded': data.get('founded', ''),
             'revenue_range': data.get('revenue_range', ''),
             'description': data.get('description', ''),
         }
     except Exception as e:
-        print(f"[WF03] Clay enrichment error for {domain}: {e}")
+        print(f"[WF03] Claude firmographic extraction error for {domain}: {e}")
         return {
-            'company_name': domain.split('.')[0].capitalize(),
-            'employee_count': '',
-            'funding_status': '',
-            'hq': '',
-            'linkedin_url': '',
-            'founded': '',
-            'tech_stack': [],
-            'revenue_range': '',
+            'company_name': company_name_guess,
+            'employee_count': '', 'funding_status': '', 'hq': '',
+            'linkedin_url': '', 'founded': '', 'revenue_range': '',
             'description': '',
-            'clay_error': str(e),
         }
 
 
@@ -172,9 +193,9 @@ def run(job_id, callback_url, project_slug, payload):
         post_callback(callback_url, job_id, WORKFLOW_ID, 'running',
                       log_message=f'WF03: Enriching {domain} ({idx}/{total})...')
 
-        # Clay enrichment
-        clay_data = clay_enrich_domain(domain)
-        time.sleep(0.5)  # Rate limit
+        # Firmographic enrichment via Exa + Claude (replaces Clay API)
+        firm_data = exa_firmographic_enrich(domain)
+        time.sleep(0.5)
 
         # Exa messaging intel
         messaging = exa_messaging_intel(domain)
@@ -183,12 +204,12 @@ def run(job_id, callback_url, project_slug, payload):
         profile = {
             'domain': domain,
             'g2_slug': g2_slug,
-            **clay_data,
+            **firm_data,
             'messaging_intel': messaging,
         }
         competitor_profiles.append(profile)
-        print(f"[WF03] Enriched {domain}: {clay_data.get('company_name', '')}, "
-              f"{clay_data.get('employee_count', '')} employees")
+        print(f"[WF03] Enriched {domain}: {firm_data.get('company_name', '')}, "
+              f"{firm_data.get('employee_count', '')} employees")
 
     post_callback(callback_url, job_id, WORKFLOW_ID, 'running',
                   log_message=f'WF03: Complete. {len(competitor_profiles)} profiles built.')
