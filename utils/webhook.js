@@ -117,8 +117,11 @@ function buildPayload(workflowId, state) {
     case 'Competitor_Discovery':
       return {
         client_domain:     id.primary_domain,
-        offer_description: id.offer_description,
-        industry:          id.industry,
+        client_name:       id.client_name || '',
+        offer_description: id.offer_description || '',
+        industry:          id.industry || '',
+        primary_products:  id.primary_products || [],
+        target_personas:   id.target_personas || [],
         gsc_top_keywords:  (base?.gsc_all_queries || []).slice(0, 50)
       };
 
