@@ -6,7 +6,7 @@ voice index and content brief.
 """
 import re
 
-from helpers import http_post, http_get, post_callback, claude_message, chunked
+from helpers import post_callback, claude_message
 
 WORKFLOW_ID = 'Content_Creator'
 
@@ -120,7 +120,7 @@ Content gap to fill: {brief.get('serp_content_gap', brief.get('angle', ''))}
 CTA to include: {cta_section}
 
 Outline to follow (approximate — adapt as needed):
-{chr(10).join(f"{s.get('section', '')}: {s.get('guidance', '')} (~{s.get('word_count', 150)} words)" for s in outline[:8])}"""
+{chr(10).join(f"{s.get('heading', s.get('section', ''))}: {s.get('notes', s.get('guidance', ''))} (~{s.get('word_count', 150)} words)" for s in outline[:8])}"""
 
     post_callback(callback_url, job_id, WORKFLOW_ID, 'running',
                   log_message='WF16: Calling Claude API to generate article body HTML...')
